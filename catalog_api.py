@@ -8,7 +8,6 @@ def load_catalog():
     with open('catalog.json', 'r') as f:
         return json.load(f)
 
-# API endpoint to get the platform name and MQTT settings
 @app.get("/mqtt_settings/")
 async def get_mqtt_settings():
     catalog = load_catalog()
@@ -17,13 +16,11 @@ async def get_mqtt_settings():
         "mqtt": catalog["mqtt"]
     }
 
-# API endpoint to get all projects
 @app.get("/projects/")
 async def get_projects():
     catalog = load_catalog()
     return catalog["projects"]
 
-# API endpoint to get thresholds for a specific project and room
 @app.get("/thresholds/{project_name}/{room_id}")
 async def get_thresholds(project_name: str, room_id: str):
     catalog = load_catalog()
@@ -36,6 +33,16 @@ async def get_thresholds(project_name: str, room_id: str):
                         "humidity_threshold": room.get("humidity_threshold", 50.0)
                     }
     raise HTTPException(status_code=404, detail="Project or Room not found")
+
+@app.get("/telegram_token/")
+async def get_telegram_token():
+    catalog = load_catalog()
+    return {"token": catalog["telegram"]["token"]}
+
+@app.get("/thingspeak_key/")
+async def get_thingspeak_key():
+    catalog = load_catalog()
+    return {"api_key": catalog["thingspeak"]["api_key"]}
 
 if __name__ == '__main__':
     import uvicorn

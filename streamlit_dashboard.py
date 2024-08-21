@@ -1,70 +1,79 @@
 import streamlit as st
 import requests
-import pandas as pd
-import plotly.express as px
+import json
 
-# API URLs
-CATALOG_API_URL = "http://localhost:3002"
-DATABASE_API_URL = "http://localhost:3001"
+catalog_api_url = "http://localhost:3002"
 
+# Fetch the catalog data
+def get_catalog_data():
+    response = requests.get(f"{catalog_api_url}/projects/")
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error("Failed to fetch project data.")
+        return []
+
+# Fetch Telegram token
+def get_telegram_token():
+    response = requests.get(f"{catalog_api_url}/telegram_token/")
+    if response.status_code == 200:
+        return response.json()["token"]
+    else:
+        st.error("Failed to fetch Telegram token.")
+        return ""
+
+# Fetch ThingSpeak API key
+def get_thingspeak_key():
+    response = requests.get(f"{catalog_api_url}/thingspeak_key/")
+    if response.status_code == 200:
+        return response.json()["api_key"]
+    else:
+        st.error("Failed to fetch ThingSpeak API key.")
+        return ""
+
+# Update the catalog.json
+def update_catalog(new_data):
+    with open('catalog.json', 'r+') as file:
+        catalog = json.load(file)
+        catalog.update(new_data)
+        file.seek(0)
+        json.dump(catalog, file, indent=4)
+        file.truncate()
+
+# Admin Panel Section
+st.sidebar.title("Admin Panel")
+
+st.sidebar.subheader("View and Modify Tokens")
+telegram_token = st.sidebar.text_input("Telegram Token", value=get_telegram_token())
+thingspeak_key = st.sidebar.text_input("ThingSpeak API Key", value=get_thingspeak_key())
+
+if st.sidebar.button("Update Tokens"):
+    update_catalog({"telegram": {"token": telegram_token}, "thingspeak": {"api_key": thingspeak_key}})
+    st.sidebar.success("Tokens updated successfully!")
+
+# Main Dashboard Section
 st.title("Smart Window Dashboard")
 
-# Section 1: Admin Panel
-st.header("Admin Panel")
-st.write("Registered Projects")
-projects = requests.get(f"{CATALOG_API_URL}/projects/").json()
-project_names = [proj['projectName'] for proj in projects]
-st.write(project_names)
-
-# Section 2: Add New Project
-st.header("Add New Project")
-new_project_name = st.text_input("New Project Name")
-new_room_id = st.text_input("New Room ID")
-
-if st.button("Add Project"):
-    new_project = {
-        "projectName": new_project_name,
-        "rooms": [{"room_ID": new_room_id}]
-    }
-    response = requests.post(f"{CATALOG_API_URL}/projects/", json=new_project)
-    st.success(response.json()["status"])
-
-# Section 3: Modify Project Thresholds
-st.header("Modify Project Thresholds")
+projects = get_catalog_data()
+project_names = [project['projectName'] for project in projects]
 selected_project = st.selectbox("Select Project", project_names)
-selected_room = st.text_input("Room ID")
 
-if selected_project and selected_room:
-    thresholds = requests.get(f"{CATALOG_API_URL}/thresholds/{selected_project}/{selected_room}").json()
-    new_temp_threshold = st.number_input("Temperature Threshold", value=thresholds["temperature_threshold"])
-    new_hum_threshold = st.number_input("Humidity Threshold", value=thresholds["humidity_threshold"])
+if selected_project:
+    selected_project_data = next(project for project in projects if project['projectName'] == selected_project)
+    rooms = selected_project_data['rooms']
+    room_ids = [room['room_ID'] for room in rooms]
+    selected_room = st.selectbox("Select Room", room_ids)
 
-    if st.button("Update Thresholds"):
-        update_data = {
-            "temperature_threshold": new_temp_threshold,
-            "humidity_threshold": new_hum_threshold
-        }
-        response = requests.put(f"{CATALOG_API_URL}/thresholds/{selected_project}/{selected_room}", json=update_data)
-        st.success(response.json()["status"])
+    if selected_room:
+        room_data = next(room for room in rooms if room['room_ID'] == selected_room)
+        st.write(f"Temperature Threshold: {room_data['temperature_threshold']}")
+        st.write(f"Humidity Threshold: {room_data['humidity_threshold']}")
 
-# Section 4: Data Visualization
-st.header("Data Visualization")
-selected_project_viz = st.selectbox("Select Project for Visualization", project_names, key="viz_project")
-selected_room_viz = st.text_input("Room ID for Visualization", key="viz_room")
-start_date = st.date_input("Start Date")
-end_date = st.date_input("End Date")
+        start_date = st.date_input("Start Date")
+        end_date = st.date_input("End Date")
 
-if st.button("Visualize Data"):
-    sensor_data = requests.get(f"{DATABASE_API_URL}/sensor_data/{selected_project_viz}/{selected_room_viz}?start_date={start_date}&end_date={end_date}").json()
-    if sensor_data:
-        df = pd.DataFrame(sensor_data)
+        if st.button("Fetch Data"):
+            # Fetch data for visualization
+            st.write("Fetching data...")
 
-        # Temperature Visualization
-        fig_temp = px.line(df, x="timestamp", y="temperature", title="Temperature Over Time")
-        st.plotly_chart(fig_temp)
-
-        # Humidity Visualization
-        fig_hum = px.line(df, x="timestamp", y="humidity", title="Humidity Over Time")
-        st.plotly_chart(fig_hum)
-    else:
-        st.error("No data available for the selected parameters.")
+# Add additional sections as needed...
