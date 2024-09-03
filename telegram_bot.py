@@ -1,79 +1,94 @@
+import requests
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
-import requests
 from datetime import datetime
 
-# Fetch Telegram token from catalog API
-catalog_api_url = "http://localhost:3002/telegram_token/"
-token_response = requests.get(catalog_api_url).json()
-TELEGRAM_TOKEN = token_response["token"]
+# Fetch the Telegram token from the catalog API
+def fetch_telegram_token():
+    response = requests.get("http://localhost:3002/telegram_token")
+    if response.status_code == 200:
+        return response.json()["token"]
+    else:
+        raise Exception("Failed to fetch Telegram token from catalog")
 
-# Fetch API URL from catalog API
-api_url = "http://localhost:3002/mqtt_settings/"
-mqtt_settings = requests.get(api_url).json()
-API_URL = f"http://{mqtt_settings['api']['host']}:{mqtt_settings['api']['port']}/"
+# Fetch the database API URL from the catalog API
+def fetch_database_api_url():
+    response = requests.get("http://localhost:3002/database_api_url/")
+    if response.status_code == 200:
+        return response.json()["url"]
+    else:
+        raise Exception("Failed to fetch database API URL from catalog")
 
-class SensorBot:
-    def __init__(self):
-        self.updater = Updater(TELEGRAM_TOKEN, use_context=True)
-        self.dispatcher = self.updater.dispatcher
+# Global variable for the database API URL
+DATABASE_API_URL = fetch_database_api_url()
 
-    def start(self, update: Update, context: CallbackContext):
-        update.message.reply_text(
-            'Hello! Use /query command to get sensor data.\n'
-            'Please provide projectID, roomID, start_date, and end_date to get sensor readings.'
-        )
+# Command to start the bot
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text(
+        'Hello! Use /query command to get sensor data.\n'
+        'Usage: /query <projectID> <roomID> <start_date> <end_date>\n'
+        'Dates should be in YYYY-MM-DD format.'
+    )
 
-    def query(self, update: Update, context: CallbackContext):
-        args = context.args
-        if len(args) < 4:
-            update.message.reply_text('Usage: /query <projectID> <roomID> <start_date> <end_date>')
-            return
+# Command to query average sensor data
+def query(update: Update, context: CallbackContext):
+    args = context.args
+    if len(args) != 4:
+        update.message.reply_text('Usage: /query <projectID> <roomID> <start_date> <end_date>')
+        return
 
-        projectID = args[0]
-        roomID = args[1]
-        start_date = args[2]
-        end_date = args[3]
+    project_ID = args[0]
+    room_ID = args[1]
+    start_date = args[2]
+    end_date = args[3]
 
-        # Check date format
-        try:
-            datetime.strptime(start_date, '%Y-%m-%d')
-            datetime.strptime(end_date, '%Y-%m-%d')
-        except ValueError:
-            update.message.reply_text('Error: Invalid date format. Please use YYYY-MM-DD.')
-            return
+    # Validate date format
+    try:
+        datetime.strptime(start_date, '%Y-%m-%d')
+        datetime.strptime(end_date, '%Y-%m-%d')
+    except ValueError:
+        update.message.reply_text('Error: Invalid date format. Please use YYYY-MM-DD.')
+        return
 
-        result = self.query_sensors_api(projectID, roomID, start_date, end_date)
+    # Construct the URL to request average data
+    url = f"{DATABASE_API_URL}sensor_data/{project_ID}/{room_ID}/average?start_date={start_date}&end_date={end_date}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an error for bad responses
+        data = response.json()
 
-        if not result:
-            update.message.reply_text('Error fetching data. Please try again later.')
-            return
+        # Extract average temperature and humidity
+        avg_temp = data.get('average_temperature', 'N/A')
+        avg_hum = data.get('average_humidity', 'N/A')
 
-        # Extract temperature and humidity from the result
-        avg_temp = result.get('avg_temp', 'N/A')
-        avg_hum = result.get('avg_hum', 'N/A')
-
+        # Respond with the average data
         message = (
-            f"Average Temperature: {avg_temp}\n"
-            f"Average Humidity: {avg_hum}\n"
+            f"Average Temperature: {avg_temp} °C\n"
+            f"Average Humidity: {avg_hum} %"
         )
         update.message.reply_text(message)
 
-    def query_sensors_api(self, projectID, roomID, start_date=None, end_date=None):
-        url = f"{API_URL}GET/{projectID}/{roomID}/range?start_date={start_date}&end_date={end_date}"
-        response = requests.get(url)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"Error: {response.status_code}. Failed to fetch sensor data.")
-            return None
+    except requests.exceptions.RequestException as e:
+        update.message.reply_text(f"Error fetching data: {e}")
 
-    def run(self):
-        self.dispatcher.add_handler(CommandHandler('start', self.start))
-        self.dispatcher.add_handler(CommandHandler('query', self.query))
-        self.updater.start_polling()
-        self.updater.idle()
+def main():
+    # Fetch the Telegram token from the catalog API
+    token = fetch_telegram_token()
+
+    # Initialize the bot with the fetched token
+    updater = Updater(token, use_context=True)
+    dispatcher = updater.dispatcher
+
+    # Add command handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("query", query))
+
+    # Start polling updates
+    updater.start_polling()
+    print("Bot is running...")  
+
+    # Keep the bot running until interrupted
+    updater.idle()
 
 if __name__ == '__main__':
-    bot = SensorBot()
-    bot.run()
+    main()

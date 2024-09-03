@@ -7,42 +7,38 @@
         },
         "topic": "test1"
     },
-    "projects": [
-        {
-            "projectName": "proj1",
-            "rooms": [
-                {
-                    "room_ID": "room1",
-                    "temperature_threshold": 28.0,
-                    "humidity_threshold": 50.0
-                }
-            ]
-        },
-        {
-            "projectName": "proj2v",
-            "rooms": [
-                {
-                    "room_ID": "room1",
-                    "temperature_threshold": 25.0,
-                    "humidity_threshold": 55.0
-                },
-                {
-                    "room_ID": "room2",
-                    "temperature_threshold": 26.0,
-                    "humidity_threshold": 60.0
-                }
-            ]
-        }
-    ],
     "api": {
         "host": "localhost",
         "port": 3001
     },
+    "projects": {
+        "proj1": {
+            "rooms": {
+                "room1": {
+                    "temperature_threshold": 28.0,
+                    "humidity_threshold": 60.0
+                }
+            }
+        },
+        "proj2v": {
+            "rooms": {
+                "room1": {
+                    "temperature_threshold": 30.0,
+                    "humidity_threshold": 55.0
+                },
+                "room2": {
+                    "temperature_threshold": 27.0,
+                    "humidity_threshold": 45.0
+                }
+            }
+        }
+    },
     "telegram": {
-        "token": "6717412145:AAFGvIatfchR-g0915a06rlAXx346uKrx1s"
+        "token": "7244654467:AAGb9zupq1rJXy4z-M5xtk_p6-wtcitXb_U"
     },
     "thingspeak": {
-        "api_key": "91PCXQ3EAF242I1D"
+        "api_key": "URC46YXEE4NDN56R"
     },
-    "lastUpdate": "2024-08-20 15:00:00"
+
+    "lastUpdate": "2024-09-03 21:34:09"
 }
