@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import datetime
+import matplotlib.pyplot as plt
 
 # Fetch Catalog API URLs
 CATALOG_API_URL = "http://localhost:3002"
@@ -103,28 +104,89 @@ if st.button("Update Thresholds"):
 # Section 5: Data Visualization
 st.header("Data Visualization")
 
-selected_project_viz = st.selectbox(
-    "Select Project for Visualization", list(projects.keys()), key="viz_project"
-)
+# Function to fetch projects and rooms from the catalog API
+def get_projects_and_rooms():
+    try:
+        response = requests.get(f"{CATALOG_API_URL}/projects/")
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Failed to fetch projects and rooms: {e}")
+        return {}
 
+# Fetch projects and their rooms dynamically
+projects = get_projects_and_rooms()
 
-rooms_viz = projects[selected_project_viz]["rooms"]
-selected_room_viz = st.selectbox(
-    "Select Room for Visualization", list(rooms_viz.keys()), key="viz_room"
-)
+# Select project and room
+selected_project_viz = st.selectbox("Select Project for Visualization", list(projects.keys()), key="viz_project")
 
+# Ensure the correct room options are presented based on the selected project
+if selected_project_viz:
+    rooms = list(projects[selected_project_viz]["rooms"].keys())
+    selected_room_viz = st.selectbox("Select Room for Visualization", rooms, key="viz_room")
+else:
+    st.error("No projects available")
+
+# Select date range
 start_date = st.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=7))
 end_date = st.date_input("End Date", datetime.date.today())
 
-if st.button("Show Data"):
-    sensor_data = get_sensor_data(selected_project_viz, selected_room_viz, start_date, end_date)
-    
-    if sensor_data:
-        df = pd.DataFrame(sensor_data)
-
-        if {'temperature', 'humidity'}.issubset(df.columns):
-            st.line_chart(df[['temperature', 'humidity']])
-        else:
-            st.write("Data retrieved does not contain temperature or humidity fields.")
+# Function to fetch sensor data for the selected date range
+def get_sensor_data(project_ID, room_ID, start_date, end_date):
+    response = requests.get(
+        f"{DATABASE_API_URL}/sensor_data/{project_ID}/{room_ID}/range",
+        params={"start_date": start_date, "end_date": end_date}
+    )
+    if response.status_code == 200:
+        return response.json()["data"]
     else:
-        st.write("No data available for the selected date range.")
+        st.error(f"Failed to retrieve data: {response.status_code}")
+        return []
+
+# Show data when button is clicked
+if st.button("Show Data"):
+    if selected_project_viz and selected_room_viz:
+        sensor_data = get_sensor_data(selected_project_viz, selected_room_viz, start_date.isoformat(), end_date.isoformat())
+
+        # Check if data is retrieved and contains the required fields
+        if sensor_data:
+            # Convert the data into a DataFrame
+            df = pd.DataFrame(sensor_data)
+            
+            # Ensure the DataFrame contains the required columns before plotting
+            if 'temperature' in df.columns and 'humidity' in df.columns and 'timestamp' in df.columns:
+                # Correctly combine datestamp and timestamp into a proper datetime object
+                df['datetime'] = pd.to_datetime(df['datestamp'] + ' ' + df['timestamp'], format='%Y-%m-%d %H:%M:%S')
+
+                # Set up the plot
+                fig, ax1 = plt.subplots(figsize=(10, 5))
+
+                # Plot temperature on the left y-axis
+                ax1.plot(df['datetime'], df['temperature'], 'r-', label='Temperature (°C)')
+                ax1.set_xlabel('Date and Time')
+                ax1.set_ylabel('Temperature (°C)', color='r')
+                ax1.tick_params(axis='y', labelcolor='r')
+
+                # Create a second y-axis for humidity
+                ax2 = ax1.twinx()
+                ax2.plot(df['datetime'], df['humidity'], 'b-', label='Humidity (%)')
+                ax2.set_ylabel('Humidity (%)', color='b')
+                ax2.tick_params(axis='y', labelcolor='b')
+
+                # Format x-axis to show both date and time
+                ax1.xaxis.set_major_formatter(plt.FixedFormatter(df['datetime'].dt.strftime('%Y-%m-%d %H:%M')))
+
+                # Add legends and title
+                fig.tight_layout()
+                st.pyplot(fig)
+
+                # Display the data in a table format below the chart
+                st.subheader("Sensor Data")
+                st.dataframe(df[['datetime', 'temperature', 'humidity']])
+
+            else:
+                st.error("Data retrieved does not contain temperature or humidity fields.")
+        else:
+            st.write("No data available for the selected date range.")
+    else:
+        st.error("Please select a valid project and room.")

@@ -3,17 +3,15 @@
 #include <DHT.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-#include <TimeLib.h>  // Ensure you have the Time library installed
-#include <time.h>     // For NTP
+#include <time.h>
 
 // WiFi and MQTT settings
 const char* ssid = "ali_Redmi";
 const char* password = "taher3537";
-const char* mqtt_server = "mqtt.eclipseprojects.io";  // MQTT broker address
-const int mqtt_port = 1883;                           // MQTT broker port
-const char* mqtt_topic = "test1";                     // MQTT topic
-const char* project_ID = "proj1";                     // Project ID
-const char* room_ID = "room1";                        // Room ID
+const char* mqtt_server = "mqtt.eclipseprojects.io";
+const char* mqtt_topic = "test1";
+const char* project_ID = "proj1";
+const char* room_ID = "room1";
 
 // DHT sensor configuration
 #define DHTPIN 17
@@ -25,25 +23,13 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 
 // LCD configuration
-LiquidCrystal_I2C mylcd(0x27, 16, 2);  // LCD I2C address
+LiquidCrystal_I2C mylcd(0x27, 16, 2);
 
-// NTP Server settings
+// Timezone for Italy
 const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 0;       // Offset from GMT in seconds
-const int   daylightOffset_sec = 3600;  // Daylight offset (1 hour for most places)
+const long gmtOffset_sec = 3600; // GMT+1
+const int daylightOffset_sec = 3600; // Daylight savings
 
-// Function to get and set time from NTP server
-void setupTime() {
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  Serial.print("Waiting for NTP time sync...");
-  while (!time(nullptr)) {
-    Serial.print(".");
-    delay(1000);
-  }
-  Serial.println("Time synchronized");
-}
-
-// Function to connect to WiFi
 void setup_wifi() {
   delay(10);
   Serial.println();
@@ -62,7 +48,6 @@ void setup_wifi() {
   Serial.println(WiFi.localIP());
 }
 
-// Function to reconnect to the MQTT broker
 void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
@@ -77,18 +62,26 @@ void reconnect() {
   }
 }
 
-// Function to publish sensor data
 void publish_sensor_data(float temperature, float humidity) {
-  time_t now = time(nullptr);
-  struct tm* timeinfo = localtime(&now);
-  String timestamp = String(timeinfo->tm_hour) + ":" + String(timeinfo->tm_min) + ":" + String(timeinfo->tm_sec);
-  String datestamp = String(timeinfo->tm_year + 1900) + "-" + String(timeinfo->tm_mon + 1) + "-" + String(timeinfo->tm_mday);
+  time_t now;
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+
+  char timeStamp[9];
+  char dateStamp[11];
+  
+  // Format the timestamp and datestamp to ensure leading zeros
+  strftime(timeStamp, sizeof(timeStamp), "%H:%M:%S", &timeinfo);
+  strftime(dateStamp, sizeof(dateStamp), "%Y-%m-%d", &timeinfo);
 
   String payload = "{\"project_ID\":\"" + String(project_ID) + "\", \"room_ID\":\"" + String(room_ID) + "\", ";
   payload += "\"temperature\":" + String(temperature) + ", ";
   payload += "\"humidity\":" + String(humidity) + ", ";
-  payload += "\"timestamp\":\"" + timestamp + "\", ";
-  payload += "\"datestamp\":\"" + datestamp + "\"}";
+  payload += "\"timestamp\":\"" + String(timeStamp) + "\", ";
+  payload += "\"datestamp\":\"" + String(dateStamp) + "\"}";
 
   client.publish(mqtt_topic, payload.c_str());
   Serial.print("Publishing data: ");
@@ -97,22 +90,19 @@ void publish_sensor_data(float temperature, float humidity) {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.println("Initializing ESP32...");
-
   setup_wifi();
-  setupTime();  // Initialize time using NTP
-  client.setServer(mqtt_server, mqtt_port);
+  client.setServer(mqtt_server, 1883);
 
-  // Initialize DHT sensor
   dht.begin();
-  Serial.println("DHT sensor initialized.");
 
   // Initialize LCD
   mylcd.init();
   mylcd.backlight();
   mylcd.setCursor(0, 0);
   mylcd.print("Initializing...");
+
+  // Set up NTP for time synchronization
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 }
 
 void loop() {
@@ -121,7 +111,6 @@ void loop() {
   }
   client.loop();
 
-  // Read sensor data
   float temperature = dht.readTemperature();
   float humidity = dht.readHumidity();
 
@@ -130,14 +119,12 @@ void loop() {
     mylcd.setCursor(0, 0);
     mylcd.print("Sensor Error     ");
   } else {
-    // Display data on the serial monitor
     Serial.print("Temperature: ");
     Serial.print(temperature);
     Serial.print(" °C, Humidity: ");
     Serial.print(humidity);
     Serial.println(" %");
 
-    // Display temperature and humidity on LCD
     mylcd.setCursor(0, 0);
     mylcd.print("Temp: ");
     mylcd.print(temperature);
@@ -148,9 +135,8 @@ void loop() {
     mylcd.print(humidity);
     mylcd.print(" %   ");
 
-    // Publish sensor data
     publish_sensor_data(temperature, humidity);
   }
 
-  delay(60000);  // Delay for 60 seconds before reading again
+  delay(10000);
 }
