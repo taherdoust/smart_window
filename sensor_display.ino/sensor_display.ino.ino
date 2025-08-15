@@ -5,75 +5,77 @@
 #include <LiquidCrystal_I2C.h>
 #include <time.h>
 
-// WiFi and MQTT settings
-const char* ssid = "ali_Redmi";
-const char* password = "taher3537";
-const char* mqtt_server = "mqtt.eclipseprojects.io";
+// ── User settings ───────────────────────────────────────────────────────────────
+const char* ssid       = "Vodafone-C02080026";
+const char* password   = "MeE76EGLafbKX4b6";
+const char* mqtt_server= "mqtt.eclipseprojects.io";
 const char* mqtt_topic = "test1";
 const char* project_ID = "proj1";
-const char* room_ID = "room1";
+const char* room_ID    = "room1";
 
-// DHT sensor configuration
 #define DHTPIN 17
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
-// WiFi and MQTT clients
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-// LCD configuration
+// LCD (I2C address 0x27 frequently used; change if your scanner shows different)
 LiquidCrystal_I2C mylcd(0x27, 16, 2);
 
-// Timezone for Italy
+// Time (Europe/Rome DST rules)
 const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 3600; // GMT+1
-const int daylightOffset_sec = 3600; // Daylight savings
 
-void setup_wifi() {
-  delay(10);
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
+// Reconnect cadence
+unsigned long lastMqttAttempt = 0;
+const unsigned long mqttRetryEveryMs = 5000;
 
+// ── Helpers ─────────────────────────────────────────────────────────────────────
+bool connectWifi(uint32_t timeoutMs = 15000) {
+  Serial.printf("Connecting to %s\n", ssid);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) {
+    delay(250);
     Serial.print(".");
   }
+  Serial.println();
 
-  Serial.println("\nWiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi OK, IP: "); Serial.println(WiFi.localIP());
+    return true;
+  } else {
+    Serial.println("WiFi FAILED (timeout), continuing offline");
+    return false;
+  }
 }
 
-void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
+bool connectMqtt(uint32_t timeoutMs = 8000) {
+  unsigned long t0 = millis();
+  Serial.print("MQTT: connecting");
+  while (millis() - t0 < timeoutMs) {
     if (client.connect("ESP32Sensor")) {
-      Serial.println("Connected to MQTT broker");
-    } else {
-      Serial.print("Failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" Try again in 5 seconds");
-      delay(5000);
+      Serial.println("\nMQTT OK");
+      return true;
     }
+    Serial.print(".");
+    delay(500);
   }
+  Serial.println("\nMQTT FAILED (timeout), will retry later");
+  return false;
 }
 
 void publish_sensor_data(float temperature, float humidity) {
-  time_t now;
   struct tm timeinfo;
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("Failed to obtain time");
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("No time yet; skipping timestamped publish");
     return;
   }
 
   char timeStamp[9];
   char dateStamp[11];
-  
-  // Format the timestamp and datestamp to ensure leading zeros
   strftime(timeStamp, sizeof(timeStamp), "%H:%M:%S", &timeinfo);
   strftime(dateStamp, sizeof(dateStamp), "%Y-%m-%d", &timeinfo);
 
@@ -84,59 +86,80 @@ void publish_sensor_data(float temperature, float humidity) {
   payload += "\"datestamp\":\"" + String(dateStamp) + "\"}";
 
   client.publish(mqtt_topic, payload.c_str());
-  Serial.print("Publishing data: ");
+  Serial.print("Published: ");
   Serial.println(payload);
 }
 
+// ── Arduino lifecycle ───────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  setup_wifi();
-  client.setServer(mqtt_server, 1883);
+  delay(50);
+
+  // I2C pins (ESP32 default is SDA=21, SCL=22; set explicitly for clarity)
+  Wire.begin(21, 22);
+
+  mylcd.init();
+  mylcd.backlight();
+  mylcd.clear();
+  mylcd.setCursor(0, 0); mylcd.print("WiFi...");
+  bool wifiOK = connectWifi();
 
   dht.begin();
 
-  // Initialize LCD
-  mylcd.init();
-  mylcd.backlight();
-  mylcd.setCursor(0, 0);
-  mylcd.print("Initializing...");
+  // Time zone for Italy with DST
+  setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1); // Rome DST rules
+  tzset();
+  configTime(0, 0, ntpServer);
 
-  // Set up NTP for time synchronization
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  client.setServer(mqtt_server, 1883);
+
+  if (wifiOK) {
+    mylcd.setCursor(0, 0); mylcd.print("MQTT...");
+    connectMqtt(); // try once during setup, but don't block forever
+  }
+
+  // Show something meaningful on boot
+  mylcd.clear();
+  mylcd.setCursor(0, 0); mylcd.print("Init done");
+  mylcd.setCursor(0, 1); mylcd.print("Reading in 3s");
+  delay(3000);
 }
 
 void loop() {
-  if (!client.connected()) {
-    reconnect();
+  // Maintain MQTT only if connected; otherwise, retry occasionally without blocking UI
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!client.connected()) {
+      unsigned long now = millis();
+      if (now - lastMqttAttempt > mqttRetryEveryMs) {
+        lastMqttAttempt = now;
+        connectMqtt();
+      }
+    } else {
+      client.loop();
+    }
   }
-  client.loop();
 
+  // Read sensors & update LCD regardless of MQTT state
   float temperature = dht.readTemperature();
   float humidity = dht.readHumidity();
 
+  mylcd.clear();
   if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("Failed to read from DHT sensor!");
-    mylcd.setCursor(0, 0);
-    mylcd.print("Sensor Error     ");
+    Serial.println("DHT read failed");
+    mylcd.setCursor(0, 0); mylcd.print("Sensor Error");
   } else {
-    Serial.print("Temperature: ");
-    Serial.print(temperature);
-    Serial.print(" °C, Humidity: ");
-    Serial.print(humidity);
-    Serial.println(" %");
+    Serial.printf("T: %.1fC  H: %.1f%%\n", temperature, humidity);
+    mylcd.setCursor(0, 0); mylcd.print("Temp:");
+    mylcd.setCursor(6, 0); mylcd.print(temperature, 1); mylcd.print("C");
+    mylcd.setCursor(0, 1); mylcd.print("Hum :");
+    mylcd.setCursor(6, 1); mylcd.print(humidity, 1); mylcd.print("%");
 
-    mylcd.setCursor(0, 0);
-    mylcd.print("Temp: ");
-    mylcd.print(temperature);
-    mylcd.print(" C   ");
-
-    mylcd.setCursor(0, 1);
-    mylcd.print("Humidity: ");
-    mylcd.print(humidity);
-    mylcd.print(" %   ");
-
-    publish_sensor_data(temperature, humidity);
+    if (client.connected())
+      publish_sensor_data(temperature, humidity);
+    else
+      Serial.println("MQTT offline, skipped publish");
   }
 
-  delay(10000);
+  // Shorter delay while testing; set back to 900000 (15 min) later
+  delay(5000);
 }
